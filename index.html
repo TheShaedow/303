@@ -31,7 +31,7 @@
 const AudioCtx=window.AudioContext||window.webkitAudioContext,ctx=new AudioCtx();
 const notes=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const noteMap={C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11};
-let root='C',stepIndex=0,timer=null,playing=false,nextTime=0,currentSource=null;
+let root='C',stepIndex=0,timer=null,playing=false,nextTime=0,currentSource=null,activeSources=[];
 let params={bpm:128,cutoff:780,resonance:12,env:0.58,decay:180,accent:0.55,volume:0.72};
 let wave='sawtooth',useDist=true,useDelay=true;
 const master=ctx.createGain(),delay=ctx.createDelay(),fb=ctx.createGain(),delayMix=ctx.createGain(),out=ctx.createGain(),an=ctx.createAnalyser();
@@ -50,10 +50,16 @@ function playStep(i,time){let s=pattern[i];if(!s.active)return;let semi=noteMap[
  filt.type='lowpass';filt.Q.setValueAtTime(params.resonance,time);let acc=s.accent?1+params.accent:1;let c0=clamp(params.cutoff*.45,50,8000),c1=clamp(params.cutoff*(1+params.env*5*acc),80,9000);filt.frequency.setValueAtTime(c0,time);filt.frequency.exponentialRampToValueAtTime(c1,time+.012);filt.frequency.exponentialRampToValueAtTime(c0,time+params.decay/1000);
  amp.gain.setValueAtTime(0,time);amp.gain.linearRampToValueAtTime(.9*acc,time+.006);if(!slide)amp.gain.exponentialRampToValueAtTime(.0001,time+dur*.92);else amp.gain.setValueAtTime(.75*acc,time+dur*.92);
  if(useDist){sh.curve=waveCurve(.45);sh.oversample='4x';osc.connect(filt);filt.connect(amp);amp.connect(sh);sh.connect(master)}else{osc.connect(filt);filt.connect(amp);amp.connect(master)}
- osc.start(time);osc.stop(time+dur*(slide?1.08:.98));currentSource=osc;}
+ osc.start(time);
+ const stopAt=time+dur*(slide?1.08:.98);
+ osc.stop(stopAt);
+ currentSource=osc;
+ activeSources.push(osc);
+ osc.onended=()=>{activeSources=activeSources.filter(x=>x!==osc);try{osc.disconnect()}catch(e){}};
+}
 function scheduler(){while(nextTime<ctx.currentTime+.12){playStep(stepIndex,nextTime);highlight(stepIndex);nextTime+=stepDur();stepIndex=(stepIndex+1)%16}drawLevel()}
-function start(){if(playing)return;ctx.resume();playing=true;stepIndex=0;nextTime=ctx.currentTime+.04;timer=setInterval(scheduler,25);document.getElementById('play').classList.add('active')}
-function stop(){playing=false;clearInterval(timer);timer=null;document.querySelectorAll('.step').forEach(x=>x.classList.remove('playing'));document.getElementById('play').classList.remove('active');try{currentSource&&currentSource.stop()}catch(e){}}
+function start(){if(playing)return;ctx.resume();let now=ctx.currentTime;master.gain.cancelScheduledValues(now);master.gain.setValueAtTime(params.volume,now);delayMix.gain.cancelScheduledValues(now);delayMix.gain.setValueAtTime(useDelay?.18:0,now);playing=true;stepIndex=0;nextTime=ctx.currentTime+.04;timer=setInterval(scheduler,25);document.getElementById('play').classList.add('active')}
+function stop(){playing=false;clearInterval(timer);timer=null;document.querySelectorAll('.step').forEach(x=>x.classList.remove('playing'));document.getElementById('play').classList.remove('active');let now=ctx.currentTime;master.gain.cancelScheduledValues(now);master.gain.setValueAtTime(master.gain.value,now);master.gain.linearRampToValueAtTime(0,now+.03);delayMix.gain.cancelScheduledValues(now);delayMix.gain.setValueAtTime(delayMix.gain.value,now);delayMix.gain.linearRampToValueAtTime(0,now+.03);activeSources.forEach(src=>{try{src.stop(now+.03)}catch(e){}try{src.disconnect()}catch(e){}});activeSources=[];currentSource=null;nextTime=now+.04;setTimeout(()=>{if(!playing){document.getElementById('level').style.width='0%'}},50)}
 function highlight(i){document.querySelectorAll('.step').forEach((x,idx)=>x.classList.toggle('playing',idx===i))}
 function drawLevel(){let a=new Uint8Array(an.frequencyBinCount);an.getByteFrequencyData(a);let avg=a.reduce((x,y)=>x+y,0)/a.length/255;document.getElementById('level').style.width=Math.min(100,avg*140)+'%'}
 function randomize(){let scale=[0,3,5,7,10,12],ri=noteMap[root]||0;pattern.forEach((s,i)=>{let n=(ri+scale[Math.floor(Math.random()*scale.length)])%12;s.note=notes[n];s.oct=2+Math.floor(Math.random()*3);s.active=Math.random()>.22;s.accent=Math.random()>.72;s.slide=Math.random()>.78});makeSeq();document.getElementById('lesson').innerHTML='<b>Random</b> Pattern erstellt. Accent und Slide erzeugen den klassischen Acid-Groove.'}
